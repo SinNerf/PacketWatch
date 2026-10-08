@@ -1,108 +1,118 @@
 package com.Dyieus.anti_Cheat;
 
+import com.github.retrooper.packetevents.PacketEvents;
+import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class Anti_Cheat extends JavaPlugin implements Listener {
 
     // Save individual players data ( variable names describe what they save clearly )
-    private final Map<UUID, Location> lastPlaces = new HashMap<>();
-    private final Map<UUID, Integer> fastSeconds = new HashMap<>();
-    private final Map<UUID, Integer> airSecond = new HashMap<>();
+    private final Map<UUID, playerData> dataMap = new ConcurrentHashMap<>();
+
+    public playerData getData(UUID id) {
+        return dataMap.get(id);
+    }
+
+    @Override
+    public void onLoad() {
+        PacketEvents.setAPI(SpigotPacketEventsBuilder.build(this));
+        PacketEvents.getAPI().getSettings().checkForUpdates(false);
+        PacketEvents.getAPI().load();
+    }
 
     @Override
     public void onEnable() {
         // Plugin startup logic
+        PacketEvents.getAPI().init();
+        PacketEvents.getAPI().getEventManager().registerListener(new movementPacketListener(this));
+
         getServer().getPluginManager().registerEvents(this, this);
 
         new BukkitRunnable() {
             @Override
             public void run() {
-                checkEveryone();
+                updateWorldInfo();
             }
-        }.runTaskTimer(this, 20L, 20L);
+        }.runTaskTimer(this, 1L, 1L);
     }
 
     @Override
     public void onDisable() {
         // Plugin shutdown logic
+        PacketEvents.getAPI().terminate();
     }
 
-    // getting every player that is online and giving it to other method that is responsible for tracking users data.
-    private void checkEveryone() {
+    // updates players information
+    private void updateWorldInfo() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            watch(player);
-        }
-    }
+            playerData data = dataMap.computeIfAbsent(player.getUniqueId(), k -> new playerData());
+            Location now = player.getLocation();
+            Material feet = now.getBlock().getType();
+            GameMode mode = player.getGameMode();
 
-    // responsible for keeping watch over players' data. < thank you autocorrect <3 >
-    private void watch(Player player) {
-        UUID id = player.getUniqueId();
-        Location now = player.getLocation();
-        Location before = lastPlaces.get(id);
-        lastPlaces.put(id, now.clone());
+            data.exempt = mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR
+                    || player.isFlying() || player.isGliding() || player.isInsideVehicle()
+                    || player.isInWater() || player.isInLava()
+                    || feet == Material.LADDER || feet == Material.VINE
+                    || player.hasPotionEffect(PotionEffectType.LEVITATION)
+                    || player.hasPotionEffect(PotionEffectType.JUMP_BOOST);
 
-        if (player.isFlying() || player.isGliding() || player.isInsideVehicle()) {
-            airSecond.put(id, 0);
-            fastSeconds.put(id, 0);
-            return;
-        }
-
-        if (before == null || before.getWorld() == null || now.getWorld() == null || !before.getWorld().equals(now.getWorld()) ) {
-            airSecond.put(id, 0);
-            fastSeconds.put(id, 0);
-            return;
-        }
-
-        checkSpeed(player, before, now);
-        checkFly(player, before, now);
-    }
-
-    // responsible for speed hacks.
-    private void checkSpeed(Player player, Location before, Location now) {
-        UUID id = player.getUniqueId();
-        String name = player.getName();
-
-        double dx = now.getX() - before.getX();
-        double dz = now.getZ() - before.getZ();
-        double blocks = Math.sqrt(dx * dx + dz * dz);
-
-        int limit = 10;
-        if (speedBlock(now) || speedBlock(before)) {
-            limit = 25;
-        }
-        if (blocks > limit) {
-            int strike = fastSeconds.getOrDefault(id, 0) + 1;
-            fastSeconds.put(id, strike);
-
-            if (strike >= 3) {
-                getLogger().info(name + " moved " + blocks + " in 1 second. || " + name + " was flagged " + strike + " times!");
-                player.teleport(before);
-                player.setVelocity(new Vector(0, 0, 0));
-                lastPlaces.put(id, before.clone());
+            data.supported = player.collidesAt(now.clone().subtract(0, 0.1, 0));
+            double limit = 0.5;
+            if (speedBlock(now)) {
+                limit *= 2.5;
             }
-        } else {
-            fastSeconds.put(id, 0);
+            PotionEffect speed = player.getPotionEffect(PotionEffectType.SPEED);
+            if (speed != null) {
+                limit *= 1 + 0.2 * (speed.getAmplifier() + 1);
+            }
+            data.maxSpeed = limit;
+
+            if (data.supported && !data.exempt) {
+                data.safeSpot = now.clone();
+            }
         }
     }
 
-    // Checks for every block under player that can speed up player beyond base limit.
-    private boolean speedBlock(Location spot) {
+    // responsible for crafting flag message, and returning players to legit location
+    public void punish(UUID id, String reason) {
+        Bukkit.getScheduler().runTask(this, () -> {
+            Player player = Bukkit.getPlayer(id);
+            playerData data = dataMap.get(id);
+            if (player == null || data == null || data.safeSpot == null) {
+                return;
+            }
+
+            getLogger().info(player.getName() + " was flagged. Reason: " + reason);
+            player.teleport(data.safeSpot);
+            player.setVelocity(new Vector(0, 0 ,0));
+        });
+    }
+
+    // checks for blocks that makes players run beyond limit
+    public boolean speedBlock(Location spot) {
         Location under = spot.clone();
         for (int step = 0; step < 4; step++) {
-            under.subtract(0, 0.5, 0); // checking block under player WHEN player is jumping.
+            under.subtract(0, 0.5, 0);
             Material type = under.getBlock().getType();
 
             if (!type.isSolid()) {
@@ -110,54 +120,39 @@ public final class Anti_Cheat extends JavaPlugin implements Listener {
             }
 
             return type == Material.ICE
-                    || type == Material.BLUE_ICE
                     || type == Material.PACKED_ICE
-                    || type == Material.FROSTED_ICE;
+                    || type == Material.FROSTED_ICE
+                    || type == Material.BLUE_ICE;
         }
 
         return false;
     }
 
-    // handles fly hacks, or trys to... we just hope for best.
-    private void checkFly(Player player, Location before, Location now) {
-        UUID id = player.getUniqueId();
-        String name = player.getName();
-
-        Material feet = now.getBlock().getType();
-        if (player.isInWater() || player.isInLava() || feet == Material.LADDER || feet == Material.VINE ) {
-            airSecond.put(id, 0);
-            return;
-        }
-
-        double dy = now.getY() - before.getY();
-        boolean falling = dy < -0.1;
-
-        Location lower = now.clone().subtract(0, 0.1, 0);
-        boolean supported = player.collidesAt(lower);
-
-        if (supported || falling) {
-            airSecond.put(id, 0);
-            return;
-        }
-
-        int inAir = airSecond.getOrDefault(id, 0) + 1;
-        airSecond.put(id, inAir);
-
-        if (inAir > 3) {
-            getLogger().info(name + " Has been in air for " + inAir + " (NOT FALLING)");
-            player.teleport(before);
-            player.setVelocity((new Vector(0, 0, 0)));
-            lastPlaces.put(id, before.clone());
+    // should prevent /tp and ender pearls, its just grace period.
+    private void giveGrace(Player player, long millis) {
+        playerData data = dataMap.get(player.getUniqueId());
+        if (data != null) {
+            data.graceUtil = System.currentTimeMillis() + millis;
         }
     }
 
-    // Handles clean up, after players quits.
+    @EventHandler
+    public void onTeleport(PlayerTeleportEvent event) {
+        giveGrace(event.getPlayer(), 1000);
+    }
+
+    @EventHandler
+    public void onRespawn(PlayerRespawnEvent event) {
+        giveGrace(event.getPlayer(), 1000);
+    }
+
+    @EventHandler
+    public void onVelocity(PlayerVelocityEvent event) {
+        giveGrace(event.getPlayer(), 700);
+    }
+
     @EventHandler
     public void playerLeft(PlayerQuitEvent event) {
-        UUID id = event.getPlayer().getUniqueId();
-
-        lastPlaces.remove(id);
-        fastSeconds.remove(id);
-        airSecond.remove(id);
+        dataMap.remove(event.getPlayer().getUniqueId());
     }
 }
