@@ -1,0 +1,6 @@
+name: Anti_Cheat
+version: '${version}'
+
+main: com.Dyieus.anti_Cheat.Anti_Cheat
+api-version: '26.2'
+load: POSTWORLD
