@@ -11,9 +11,11 @@ public class playerData {
     public int airTick = 0;
 
     // packet reads from below
-    public volatile boolean exempt = false; // will be used for creative and ops
-    public volatile boolean supported = false; // sanding on solid block?
+    public volatile boolean skipSpeed = false;
+    public volatile boolean skipFly = false;
+    public volatile boolean supported = false; // standing on solid block?
     public volatile double maxSpeed = 0.5; // placeholder, it defines max allowed block per tick
     public volatile long graceUtil = 0;
     public volatile Location safeSpot = null; // saves players last legit location
+    public int hitStrike = 0;
 }

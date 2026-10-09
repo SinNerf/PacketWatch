@@ -44,21 +44,30 @@ public class movementPacketListener extends PacketListenerAbstract {
         double y = packet.getLocation().getY();
         double z = packet.getLocation().getZ();
 
+        double dx = x - data.lastX;
+        double dy = y - data.lastY;
+        double dz = z - data.lastZ;
+
         boolean inGrace = System.currentTimeMillis() < data.graceUtil;
 
-        if (!data.hasLast || inGrace || data.exempt) {
+        if (!data.hasLast || inGrace) {
             data.speedStrike = 0;
             data.airTick = 0;
             remember(data, x, y, z);
             return;
         }
 
-        double dx = x - data.lastX;
-        double dy = y - data.lastY;
-        double dz = z - data.lastZ;
+        if (data.skipSpeed) {
+            data.speedStrike = 0;
+        } else {
+            checkSpeed(id, data, dx, dz);
+        }
 
-        checkSpeed(id, data, dx ,dz);
-        checkFly(id, data, dy);
+        if (data.skipFly) {
+            data.airTick = 0;
+        } else {
+            checkFly(id, data, dy);
+        }
 
         remember(data, x, y, z);
     }

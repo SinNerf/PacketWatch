@@ -46,6 +46,7 @@ public final class Anti_Cheat extends JavaPlugin implements Listener {
         PacketEvents.getAPI().getEventManager().registerListener(new movementPacketListener(this));
 
         getServer().getPluginManager().registerEvents(this, this);
+        getServer().getPluginManager().registerEvents(new hitListener(this), this);
 
         new BukkitRunnable() {
             @Override
@@ -69,10 +70,13 @@ public final class Anti_Cheat extends JavaPlugin implements Listener {
             Material feet = now.getBlock().getType();
             GameMode mode = player.getGameMode();
 
-            data.exempt = mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR
+            boolean skipBoth = mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR
                     || player.isFlying() || player.isGliding() || player.isInsideVehicle()
                     || player.isInWater() || player.isInLava()
-                    || feet == Material.LADDER || feet == Material.VINE
+                    || feet == Material.LADDER || feet == Material.VINE;
+            data.skipSpeed = skipBoth;
+
+            data.skipFly = skipBoth
                     || player.hasPotionEffect(PotionEffectType.LEVITATION)
                     || player.hasPotionEffect(PotionEffectType.JUMP_BOOST);
 
@@ -87,7 +91,7 @@ public final class Anti_Cheat extends JavaPlugin implements Listener {
             }
             data.maxSpeed = limit;
 
-            if (data.supported && !data.exempt) {
+            if (data.supported && !data.skipSpeed) {
                 data.safeSpot = now.clone();
             }
         }
@@ -128,7 +132,7 @@ public final class Anti_Cheat extends JavaPlugin implements Listener {
         return false;
     }
 
-    // should prevent /tp and ender pearls, its just grace period.
+    // should prevent /tp and enderpearls, its just grace period.
     private void giveGrace(Player player, long millis) {
         playerData data = dataMap.get(player.getUniqueId());
         if (data != null) {
